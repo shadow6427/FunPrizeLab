@@ -1,0 +1,220 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zeroeye.local/schemas/default-config.schema.json",
+  "title": "ZeroEye Generated Application Configuration",
+  "description": "Schema for the configuration object produced by tools/config_generator.py DEFAULT_CONFIG and environment overrides.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "app",
+    "server",
+    "database",
+    "redis",
+    "kafka",
+    "market",
+    "auth",
+    "monitoring",
+    "features"
+  ],
+  "properties": {
+    "app": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "environment", "debug", "log_level", "log_format"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "environment": {"type": "string", "enum": ["development", "staging", "production"]},
+        "debug": {"type": "boolean"},
+        "log_level": {"type": "string", "enum": ["debug", "info", "warning", "error"]},
+        "log_format": {"type": "string", "enum": ["json", "text"]}
+      }
+    },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "port", "read_timeout", "write_timeout", "idle_timeout", "max_header_bytes", "shutdown_timeout"],
+      "properties": {
+        "host": {"type": "string", "minLength": 1},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "read_timeout": {"type": "integer", "minimum": 1},
+        "write_timeout": {"type": "integer", "minimum": 1},
+        "idle_timeout": {"type": "integer", "minimum": 1},
+        "max_header_bytes": {"type": "integer", "minimum": 1024},
+        "shutdown_timeout": {"type": "integer", "minimum": 1}
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "port", "name", "user", "password", "pool_min", "pool_max", "timeout_ms", "ssl_mode"],
+      "properties": {
+        "host": {"type": "string", "minLength": 1},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "name": {"type": "string", "minLength": 1},
+        "user": {"type": "string", "minLength": 1},
+        "password": {"type": "string"},
+        "pool_min": {"type": "integer", "minimum": 0},
+        "pool_max": {"type": "integer", "minimum": 1},
+        "timeout_ms": {"type": "integer", "minimum": 1},
+        "ssl_mode": {"type": "string", "enum": ["disable", "allow", "prefer", "require", "verify-ca", "verify-full"]}
+      }
+    },
+    "redis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "port", "password", "db", "pool_size", "timeout_ms"],
+      "properties": {
+        "host": {"type": "string", "minLength": 1},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "password": {"type": "string"},
+        "db": {"type": "integer", "minimum": 0},
+        "pool_size": {"type": "integer", "minimum": 1},
+        "timeout_ms": {"type": "integer", "minimum": 1}
+      }
+    },
+    "kafka": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "brokers",
+        "group_id",
+        "client_id",
+        "timeout_ms",
+        "retry_count",
+        "retry_backoff_ms",
+        "enable_auto_commit",
+        "auto_commit_interval_ms"
+      ],
+      "properties": {
+        "brokers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "group_id": {"type": "string", "minLength": 1},
+        "client_id": {"type": "string", "minLength": 1},
+        "timeout_ms": {"type": "integer", "minimum": 1},
+        "retry_count": {"type": "integer", "minimum": 0},
+        "retry_backoff_ms": {"type": "integer", "minimum": 0},
+        "enable_auto_commit": {"type": "boolean"},
+        "auto_commit_interval_ms": {"type": "integer", "minimum": 1}
+      }
+    },
+    "market": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rate_limit_per_second",
+        "rate_limit_burst",
+        "orderbook_depth",
+        "max_order_size",
+        "min_order_size",
+        "max_position_size",
+        "allowed_instruments",
+        "fees"
+      ],
+      "properties": {
+        "rate_limit_per_second": {"type": "integer", "minimum": 1},
+        "rate_limit_burst": {"type": "integer", "minimum": 1},
+        "orderbook_depth": {"type": "integer", "minimum": 1},
+        "max_order_size": {"type": "number", "exclusiveMinimum": 0},
+        "min_order_size": {"type": "number", "exclusiveMinimum": 0},
+        "max_position_size": {"type": "number", "exclusiveMinimum": 0},
+        "allowed_instruments": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "fees": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maker", "taker", "withdrawal"],
+          "properties": {
+            "maker": {"type": "number", "minimum": 0},
+            "taker": {"type": "number", "minimum": 0},
+            "withdrawal": {"type": "number", "minimum": 0}
+          }
+        }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jwt_secret",
+        "jwt_expiry_minutes",
+        "refresh_token_expiry_days",
+        "session_timeout_minutes",
+        "mfa_required",
+        "max_login_attempts",
+        "lockout_duration_minutes",
+        "password_min_length",
+        "password_require_special",
+        "password_require_numbers",
+        "password_require_uppercase"
+      ],
+      "properties": {
+        "jwt_secret": {"type": "string"},
+        "jwt_expiry_minutes": {"type": "integer", "minimum": 1},
+        "refresh_token_expiry_days": {"type": "integer", "minimum": 1},
+        "session_timeout_minutes": {"type": "integer", "minimum": 1},
+        "mfa_required": {"type": "boolean"},
+        "max_login_attempts": {"type": "integer", "minimum": 1},
+        "lockout_duration_minutes": {"type": "integer", "minimum": 1},
+        "password_min_length": {"type": "integer", "minimum": 1},
+        "password_require_special": {"type": "boolean"},
+        "password_require_numbers": {"type": "boolean"},
+        "password_require_uppercase": {"type": "boolean"}
+      }
+    },
+    "monitoring": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "metrics_enabled",
+        "metrics_port",
+        "tracing_enabled",
+        "tracing_sample_rate",
+        "tracing_endpoint",
+        "health_check_enabled",
+        "profiling_enabled"
+      ],
+      "properties": {
+        "metrics_enabled": {"type": "boolean"},
+        "metrics_port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "tracing_enabled": {"type": "boolean"},
+        "tracing_sample_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "tracing_endpoint": {"type": "string", "minLength": 1},
+        "health_check_enabled": {"type": "boolean"},
+        "profiling_enabled": {"type": "boolean"}
+      }
+    },
+    "features": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "web_socket",
+        "streaming",
+        "ai_assistant",
+        "social_trading",
+        "margin_trading",
+        "futures_trading",
+        "options_trading",
+        "dark_mode",
+        "ab_testing"
+      ],
+      "properties": {
+        "web_socket": {"type": "boolean"},
+        "streaming": {"type": "boolean"},
+        "ai_assistant": {"type": "boolean"},
+        "social_trading": {"type": "boolean"},
+        "margin_trading": {"type": "boolean"},
+        "futures_trading": {"type": "boolean"},
+        "options_trading": {"type": "boolean"},
+        "dark_mode": {"type": "boolean"},
+        "ab_testing": {"type": "boolean"}
+      }
+    }
+  }
+}
