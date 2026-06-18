@@ -22,6 +22,7 @@ Usage:
 """
 
 import argparse
+import copy
 import json
 import os
 import sys
@@ -40,6 +41,13 @@ try:
     HAS_TOML = True
 except ImportError:
     HAS_TOML = False
+
+try:
+    from jsonschema import Draft202012Validator
+    HAS_JSONSCHEMA = True
+except ImportError:
+    Draft202012Validator = None
+    HAS_JSONSCHEMA = False
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +179,187 @@ SENSITIVE_KEYS = [
     "auth.jwt_secret", "auth.jwt_secret",
 ]
 
+CONFIG_SCHEMA: Dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://example.com/schemas/config-generator.schema.json",
+    "title": "Tent of Trials generated configuration",
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "app", "server", "database", "redis", "kafka", "market",
+        "auth", "monitoring", "features",
+    ],
+    "properties": {
+        "app": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["name", "version", "environment", "debug", "log_level", "log_format"],
+            "properties": {
+                "name": {"type": "string", "minLength": 1},
+                "version": {"type": "string", "minLength": 1},
+                "environment": {"type": "string", "enum": ["development", "staging", "production"]},
+                "debug": {"type": "boolean"},
+                "log_level": {"type": "string", "enum": ["debug", "info", "warning", "error", "critical"]},
+                "log_format": {"type": "string", "enum": ["json", "text"]},
+            },
+        },
+        "server": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "host", "port", "read_timeout", "write_timeout", "idle_timeout",
+                "max_header_bytes", "shutdown_timeout",
+            ],
+            "properties": {
+                "host": {"type": "string", "minLength": 1},
+                "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+                "read_timeout": {"type": "integer", "minimum": 1},
+                "write_timeout": {"type": "integer", "minimum": 1},
+                "idle_timeout": {"type": "integer", "minimum": 1},
+                "max_header_bytes": {"type": "integer", "minimum": 1024},
+                "shutdown_timeout": {"type": "integer", "minimum": 1},
+            },
+        },
+        "database": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["host", "port", "name", "user", "password", "pool_min", "pool_max", "timeout_ms", "ssl_mode"],
+            "properties": {
+                "host": {"type": "string", "minLength": 1},
+                "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+                "name": {"type": "string", "minLength": 1},
+                "user": {"type": "string", "minLength": 1},
+                "password": {"type": "string"},
+                "pool_min": {"type": "integer", "minimum": 0},
+                "pool_max": {"type": "integer", "minimum": 1},
+                "timeout_ms": {"type": "integer", "minimum": 1},
+                "ssl_mode": {"type": "string", "enum": ["disable", "allow", "prefer", "require", "verify-ca", "verify-full"]},
+            },
+        },
+        "redis": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["host", "port", "password", "db", "pool_size", "timeout_ms"],
+            "properties": {
+                "host": {"type": "string", "minLength": 1},
+                "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+                "password": {"type": "string"},
+                "db": {"type": "integer", "minimum": 0},
+                "pool_size": {"type": "integer", "minimum": 1},
+                "timeout_ms": {"type": "integer", "minimum": 1},
+            },
+        },
+        "kafka": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "brokers", "group_id", "client_id", "timeout_ms", "retry_count",
+                "retry_backoff_ms", "enable_auto_commit", "auto_commit_interval_ms",
+            ],
+            "properties": {
+                "brokers": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+                "group_id": {"type": "string", "minLength": 1},
+                "client_id": {"type": "string", "minLength": 1},
+                "timeout_ms": {"type": "integer", "minimum": 1},
+                "retry_count": {"type": "integer", "minimum": 0},
+                "retry_backoff_ms": {"type": "integer", "minimum": 0},
+                "enable_auto_commit": {"type": "boolean"},
+                "auto_commit_interval_ms": {"type": "integer", "minimum": 1},
+            },
+        },
+        "market": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "rate_limit_per_second", "rate_limit_burst", "orderbook_depth",
+                "max_order_size", "min_order_size", "max_position_size",
+                "allowed_instruments", "fees",
+            ],
+            "properties": {
+                "rate_limit_per_second": {"type": "integer", "minimum": 1},
+                "rate_limit_burst": {"type": "integer", "minimum": 1},
+                "orderbook_depth": {"type": "integer", "minimum": 1},
+                "max_order_size": {"type": "number", "exclusiveMinimum": 0},
+                "min_order_size": {"type": "number", "exclusiveMinimum": 0},
+                "max_position_size": {"type": "number", "exclusiveMinimum": 0},
+                "allowed_instruments": {"type": "array", "items": {"type": "string", "minLength": 1}},
+                "fees": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["maker", "taker", "withdrawal"],
+                    "properties": {
+                        "maker": {"type": "number", "minimum": 0},
+                        "taker": {"type": "number", "minimum": 0},
+                        "withdrawal": {"type": "number", "minimum": 0},
+                    },
+                },
+            },
+        },
+        "auth": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "jwt_secret", "jwt_expiry_minutes", "refresh_token_expiry_days",
+                "session_timeout_minutes", "mfa_required", "max_login_attempts",
+                "lockout_duration_minutes", "password_min_length",
+                "password_require_special", "password_require_numbers",
+                "password_require_uppercase",
+            ],
+            "properties": {
+                "jwt_secret": {"type": "string"},
+                "jwt_expiry_minutes": {"type": "integer", "minimum": 1},
+                "refresh_token_expiry_days": {"type": "integer", "minimum": 1},
+                "session_timeout_minutes": {"type": "integer", "minimum": 1},
+                "mfa_required": {"type": "boolean"},
+                "max_login_attempts": {"type": "integer", "minimum": 1},
+                "lockout_duration_minutes": {"type": "integer", "minimum": 1},
+                "password_min_length": {"type": "integer", "minimum": 1},
+                "password_require_special": {"type": "boolean"},
+                "password_require_numbers": {"type": "boolean"},
+                "password_require_uppercase": {"type": "boolean"},
+            },
+        },
+        "monitoring": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "metrics_enabled", "metrics_port", "tracing_enabled",
+                "tracing_sample_rate", "tracing_endpoint", "health_check_enabled",
+                "profiling_enabled",
+            ],
+            "properties": {
+                "metrics_enabled": {"type": "boolean"},
+                "metrics_port": {"type": "integer", "minimum": 1, "maximum": 65535},
+                "tracing_enabled": {"type": "boolean"},
+                "tracing_sample_rate": {"type": "number", "minimum": 0, "maximum": 1},
+                "tracing_endpoint": {"type": "string"},
+                "health_check_enabled": {"type": "boolean"},
+                "profiling_enabled": {"type": "boolean"},
+            },
+        },
+        "features": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "web_socket", "streaming", "ai_assistant", "social_trading",
+                "margin_trading", "futures_trading", "options_trading",
+                "dark_mode", "ab_testing",
+            ],
+            "properties": {
+                "web_socket": {"type": "boolean"},
+                "streaming": {"type": "boolean"},
+                "ai_assistant": {"type": "boolean"},
+                "social_trading": {"type": "boolean"},
+                "margin_trading": {"type": "boolean"},
+                "futures_trading": {"type": "boolean"},
+                "options_trading": {"type": "boolean"},
+                "dark_mode": {"type": "boolean"},
+                "ab_testing": {"type": "boolean"},
+            },
+        },
+    },
+}
+
 
 def merge_config(base: Dict, override: Dict) -> Dict:
     result = dict(base)
@@ -180,6 +369,76 @@ def merge_config(base: Dict, override: Dict) -> Dict:
         else:
             result[key] = value
     return result
+
+
+def make_partial_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+    partial = copy.deepcopy(schema)
+
+    def relax(node: Any) -> None:
+        if isinstance(node, dict):
+            node.pop("required", None)
+            for child in node.values():
+                relax(child)
+        elif isinstance(node, list):
+            for child in node:
+                relax(child)
+
+    relax(partial)
+    return partial
+
+
+def load_data_file(path: str) -> Dict[str, Any]:
+    source = Path(path)
+    try:
+        text = source.read_text()
+    except OSError as exc:
+        raise ValueError(f"could not read {path}: {exc}") from exc
+
+    suffix = source.suffix.lower()
+    try:
+        if suffix == ".json":
+            data = json.loads(text)
+        elif suffix in {".yaml", ".yml"}:
+            if not HAS_YAML:
+                raise ValueError("PyYAML is required to read YAML files")
+            data = yaml.safe_load(text) or {}
+        else:
+            raise ValueError("supported file extensions are .json, .yaml, and .yml")
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"could not parse {path}: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} must contain a JSON/YAML object")
+    return data
+
+
+def format_validation_error(error: Any) -> str:
+    location = ".".join(str(part) for part in error.absolute_path)
+    if not location:
+        location = "$"
+    return f"{location}: {error.message}"
+
+
+def validation_errors(data: Dict[str, Any], schema: Dict[str, Any]) -> List[str]:
+    if not HAS_JSONSCHEMA:
+        return ["jsonschema is required for schema validation"]
+    validator = Draft202012Validator(schema)
+    errors = sorted(validator.iter_errors(data), key=lambda err: list(err.absolute_path))
+    return [format_validation_error(error) for error in errors]
+
+
+def print_validation_errors(label: str, errors: List[str]) -> None:
+    print(f"{label} validation failed with {len(errors)} error(s):", file=sys.stderr)
+    for error in errors:
+        print(f"  - {error}", file=sys.stderr)
+
+
+def load_schema(path: Optional[str]) -> Dict[str, Any]:
+    if not path:
+        return CONFIG_SCHEMA
+    return load_data_file(path)
 
 
 def generate_config(env: str, overrides: Optional[Dict] = None) -> Dict:
@@ -309,6 +568,10 @@ def parse_args():
                        choices=["yaml", "json", "toml", "dotenv", "k8s-configmap"],
                        help="Output format")
     parser.add_argument("--output", "-o", help="Output file path")
+    parser.add_argument("--input", "-i",
+                       help="Optional JSON/YAML file with configuration overrides")
+    parser.add_argument("--schema",
+                       help="Optional JSON/YAML schema file used for validation")
     parser.add_argument("--show-sensitive", action="store_true",
                        help="Show sensitive values (default: masked)")
     parser.add_argument("--stdout", action="store_true",
@@ -318,7 +581,26 @@ def parse_args():
 
 def main():
     args = parse_args()
-    config = generate_config(args.env)
+    try:
+        schema = load_schema(args.schema)
+        input_schema = make_partial_schema(schema)
+        overrides = load_data_file(args.input) if args.input else None
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    if overrides:
+        errors = validation_errors(overrides, input_schema)
+        if errors:
+            print_validation_errors("Input", errors)
+            return 1
+
+    config = generate_config(args.env, overrides)
+
+    errors = validation_errors(config, schema)
+    if errors:
+        print_validation_errors("Generated config", errors)
+        return 1
 
     if not args.show_sensitive:
         display_config = mask_sensitive(config)
@@ -339,6 +621,17 @@ def main():
         return 1
 
     output = output_fn(display_config)
+    if args.format in {"json", "yaml"}:
+        try:
+            parsed_output = json.loads(output) if args.format == "json" else yaml.safe_load(output)
+        except Exception as exc:
+            print(f"Generated {args.format} output could not be parsed: {exc}", file=sys.stderr)
+            return 1
+        output_errors = validation_errors(parsed_output, schema)
+        if output_errors:
+            print_validation_errors("Generated output", output_errors)
+            return 1
+
     if args.stdout or not args.output:
         print(output)
     else:
@@ -350,4 +643,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -1,0 +1,9 @@
+{
+  "app": {
+    "debug": "yes",
+    "log_level": "verbose"
+  },
+  "server": {
+    "port": 70000
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "market": {
+    "rate_limit_per_second": 0,
+    "allowed_instruments": [],
+    "fees": {
+      "maker": -1
+    }
+  }
+}

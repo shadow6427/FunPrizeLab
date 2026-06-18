@@ -1,0 +1,9 @@
+{
+  "database": {
+    "pool_max": 0,
+    "surprise": true
+  },
+  "features": {
+    "dark_mode": "enabled"
+  }
+}

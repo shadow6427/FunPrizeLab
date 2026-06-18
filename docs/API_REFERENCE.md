@@ -48,6 +48,39 @@ Tokens are obtained from the `/auth/login` endpoint and expire after 1 hour.
 Use the `/auth/refresh` endpoint with the refresh token to obtain a new
 access token without requiring the user to re-authenticate.
 
+## Config Generator Schema
+
+`tools/config_generator.py` validates generated configuration with a JSON
+Schema before writing output. Callers can also pass an override file and a
+custom schema:
+
+```bash
+python3 tools/config_generator.py --env staging --input overrides.yaml --format json
+python3 tools/config_generator.py --env production --schema custom-schema.json --output config.yaml
+```
+
+Input override files may be JSON, YAML, or YML. They are treated as partial
+configuration documents and validated against the same schema with required
+fields relaxed. Unknown keys, invalid value types, and out-of-range values are
+reported together so callers can fix all template issues in one pass.
+
+The default generated configuration has these top-level objects:
+
+| Object | Purpose |
+|--------|---------|
+| `app` | Application identity, environment, debug mode, and logging options |
+| `server` | HTTP listener, timeout, header, and shutdown settings |
+| `database` | PostgreSQL connection and pool settings |
+| `redis` | Redis connection and pool settings |
+| `kafka` | Broker, client, retry, and auto-commit settings |
+| `market` | Trading limits, instrument allow-list, and fee settings |
+| `auth` | JWT, session, lockout, and password policy settings |
+| `monitoring` | Metrics, tracing, health, and profiling controls |
+| `features` | Runtime feature flags |
+
+Generated JSON and YAML output is parsed back and validated before it is printed
+or written, which catches serialization problems as well as invalid templates.
+
 ### Rate Limiting
 
 API requests are rate-limited per API key and per IP address. The rate limit
