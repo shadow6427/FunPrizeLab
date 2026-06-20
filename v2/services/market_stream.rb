@@ -104,6 +104,22 @@ end
 
 $logger.info "v2 MarketStream service starting. Hold onto your butts."
 
+module BackoffHelper
+  def self.calculate_delay(attempt, base_delay:, max_delay:, jitter: 0.0)
+    delay = [
+      base_delay * (2 ** attempt),
+      max_delay
+    ].min
+
+    if jitter > 0.0
+      variation = delay * jitter
+      delay += (rand * 2 - 1) * variation
+    end
+
+    delay
+  end
+end
+
 # ===─ Market Stream Client ==============================================================================
 
 class MarketStreamClient < EM::Connection
@@ -216,10 +232,12 @@ class MarketStreamClient < EM::Connection
     # v2 reconnection: exponential backoff with max. We learned. We grew.
     return if Constants::WS_MAX_RECONNECTS && @reconnect_attempt >= Constants::WS_MAX_RECONNECTS
 
-    delay = [
-      Constants::WS_RECONNECT_BASE * (2 ** @reconnect_attempt),
-      Constants::WS_RECONNECT_MAX
-    ].min
+    delay = BackoffHelper.calculate_delay(
+      @reconnect_attempt,
+      base_delay: Constants::WS_RECONNECT_BASE,
+      max_delay: Constants::WS_RECONNECT_MAX,
+      jitter: 0.0
+    )
 
     @reconnect_attempt += 1
 
