@@ -117,8 +117,11 @@ class JSONLogParser(LogParser):
     """Parses structured JSON log lines."""
 
     def parse(self, line: str) -> Optional[Dict[str, Any]]:
+        line = line.strip()
+        if not line:
+            return None
         try:
-            entry = json.loads(line.strip())
+            entry = json.loads(line)
             if not isinstance(entry, dict):
                 return None
             return {
@@ -129,8 +132,8 @@ class JSONLogParser(LogParser):
                 'fields': entry,
                 'format': 'json',
             }
-        except json.JSONDecodeError:
-            return None
+        except json.JSONDecodeError as e:
+            raise ValueError(f"JSON Parse Error: {str(e)}")
 
 
 class TextLogParser(LogParser):
@@ -212,20 +215,44 @@ class LogAggregator:
         self.error_patterns: Counter = Counter()
         self.top_errors: Counter = Counter()
         self.errors_by_service: Dict[str, List[str]] = defaultdict(list)
+        self.parse_failures: List[Dict[str, Any]] = []
+
+    def _record_parse_failure(self, filepath: str, line_number: int, parser_type: str, error_msg: str):
+        self.parse_failures.append({
+            "file": filepath,
+            "line": line_number,
+            "parser": parser_type,
+            "error": error_msg
+        })
+
+    def export_parse_error_report(self, output_path: str):
+        report = {
+            "total_failures": len(self.parse_failures),
+            "failures": self.parse_failures
+        }
+        with open(output_path, 'w') as f:
+            json.dump(report, f, indent=2)
+        logger.info(f"Parse error report exported to {output_path}")
 
     def process_file(self, filepath: str) -> int:
         parsed_count = 0
         try:
             if filepath.endswith('.gz'):
                 with gzip.open(filepath, 'rt', errors='replace') as f:
-                    for line in f:
-                        if self._parse_line(line):
+                    for line_num, line in enumerate(f, 1):
+                        success, err_parser, err_msg = self._parse_line(line)
+                        if success:
                             parsed_count += 1
+                        elif err_msg:
+                            self._record_parse_failure(filepath, line_num, err_parser, err_msg)
             else:
                 with open(filepath, 'r', errors='replace') as f:
-                    for line in f:
-                        if self._parse_line(line):
+                    for line_num, line in enumerate(f, 1):
+                        success, err_parser, err_msg = self._parse_line(line)
+                        if success:
                             parsed_count += 1
+                        elif err_msg:
+                            self._record_parse_failure(filepath, line_num, err_parser, err_msg)
         except Exception as e:
             logger.error(f"Error processing {filepath}: {e}")
 
@@ -240,27 +267,30 @@ class LogAggregator:
             logger.debug(f"  {filepath.name}: {count} entries")
         return total
 
-    def _parse_line(self, line: str) -> bool:
+    def _parse_line(self, line: str) -> Tuple[bool, Optional[str], Optional[str]]:
         for parser in self.parsers:
-            entry = parser.parse(line)
-            if entry:
-                self.entries.append(entry)
-                ts = entry.get('timestamp')
-                if ts:
-                    hour = datetime.fromtimestamp(ts, tz=timezone.utc).strftime('%Y-%m-%dT%H:00')
-                    self.hourly_counts[hour] += 1
-                level = entry.get('level', 'unknown').lower()
-                self.level_counts[level] += 1
-                service = entry.get('service', 'unknown')
-                self.service_counts[service] += 1
-                if level in ('error', 'critical'):
-                    msg = entry.get('message', '')
-                    if len(msg) > 200:
-                        msg = msg[:200]
-                    self.errors_by_service[service].append(msg)
-                    self.error_patterns[msg] += 1
-                return True
-        return False
+            try:
+                entry = parser.parse(line)
+                if entry:
+                    self.entries.append(entry)
+                    ts = entry.get('timestamp')
+                    if ts:
+                        hour = datetime.fromtimestamp(ts, tz=timezone.utc).strftime('%Y-%m-%dT%H:00')
+                        self.hourly_counts[hour] += 1
+                    level = entry.get('level', 'unknown').lower()
+                    self.level_counts[level] += 1
+                    service = entry.get('service', 'unknown')
+                    self.service_counts[service] += 1
+                    if level in ('error', 'critical'):
+                        msg = entry.get('message', '')
+                        if len(msg) > 200:
+                            msg = msg[:200]
+                        self.errors_by_service[service].append(msg)
+                        self.error_patterns[msg] += 1
+                    return True, None, None
+            except ValueError as e:
+                return False, parser.__class__.__name__, str(e)
+        return False, None, None
 
     def get_summary(self) -> Dict[str, Any]:
         return {
@@ -411,6 +441,7 @@ def parse_args():
     parser.add_argument("--output", "-o", default="log_report.json", help="Output file path")
     parser.add_argument("--format", choices=["json", "csv", "html"], default="json", help="Output format")
     parser.add_argument("--search", help="Search for a string in logs")
+    parser.add_argument("--parse-error-report", help="Output path for sanitized parse-error report")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     return parser.parse_args()
 
@@ -458,6 +489,9 @@ def main():
         aggregator.generate_html_report(args.output)
     else:
         aggregator.export_json(args.output)
+
+    if args.parse_error_report:
+        aggregator.export_parse_error_report(args.parse_error_report)
 
     return 0
 
