@@ -196,21 +196,133 @@ def apply_migration(version: str, direction: str = "up") -> bool:
         return success
 
 
+def get_disk_migrations() -> List[Dict[str, Any]]:
+    disk_migrations = []
+    if os.path.exists(MIGRATIONS_DIR):
+        for filename in os.listdir(MIGRATIONS_DIR):
+            if filename.endswith(".sql") or filename.endswith(".py"):
+                parts = filename.split("_", 1)
+                if len(parts) == 2:
+                    version = parts[0]
+                    description = parts[1].rsplit(".", 1)[0].replace("_", " ")
+                    m_type = "sql" if filename.endswith(".sql") else "python"
+                    disk_migrations.append({
+                        "version": version,
+                        "description": description,
+                        "type": m_type,
+                    })
+    return disk_migrations
+
+
+def get_db_migrations() -> List[Dict[str, Any]]:
+    psql_env = os.environ.copy()
+    if DB_CONFIG.get("password"):
+        psql_env["PGPASSWORD"] = DB_CONFIG["password"]
+
+    sql = f"SELECT version, description FROM {MIGRATION_TABLE} ORDER BY version ASC;"
+    cmd = [
+        "psql",
+        "-h", DB_CONFIG["host"],
+        "-p", str(DB_CONFIG["port"]),
+        "-d", DB_CONFIG["name"],
+        "-U", DB_CONFIG["user"],
+        "-t", "-c", sql,
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10, env=psql_env)
+        if result.returncode != 0:
+            if "does not exist" in result.stderr:
+                return []
+            return []
+            
+        db_migrations = []
+        for line in result.stdout.strip().split("\n"):
+            if not line.strip():
+                continue
+            parts = line.split("|", 1)
+            if len(parts) == 2:
+                version = parts[0].strip()
+                description = parts[1].strip()
+                db_migrations.append({
+                    "version": version,
+                    "description": description,
+                    "applied": True,
+                })
+        return db_migrations
+    except Exception:
+        return []
+
+
 def get_migration_status() -> List[Dict[str, Any]]:
-    status = []
-    for m in MIGRATIONS:
-        status.append({
-            "version": m["version"],
-            "description": m["description"],
-            "type": m.get("type", "sql"),
-            "applied": False,
+    disk_migrations = get_disk_migrations()
+    all_known_versions = {m["version"]: m for m in MIGRATIONS}
+    for dm in disk_migrations:
+        all_known_versions[dm["version"]] = dm
+        
+    db_migrations = get_db_migrations()
+    db_versions = {m["version"] for m in db_migrations}
+    
+    status_list = []
+    all_versions = set(all_known_versions.keys()).union(db_versions)
+    
+    for version in sorted(list(all_versions)):
+        in_db = version in db_versions
+        in_disk = version in all_known_versions
+        
+        if in_db and in_disk:
+            state = "applied"
+            desc = all_known_versions[version].get("description", "Unknown")
+        elif in_db and not in_disk:
+            state = "missing"
+            desc = next((m["description"] for m in db_migrations if m["version"] == version), "Unknown")
+        elif in_disk and not in_db:
+            state = "pending"
+            desc = all_known_versions[version].get("description", "Unknown")
+            
+        status_list.append({
+            "version": version,
+            "description": desc,
+            "state": state,
+            "applied": state == "applied"
         })
-    return status
+        
+    return status_list
+
+
+def cmd_status(json_output: bool = False) -> int:
+    status = get_migration_status()
+    inconsistent = any(s["state"] == "missing" for s in status)
+    
+    if json_output:
+        # Strip internal keys not requested, but keeping standard fields
+        output = [{"version": s["version"], "description": s["description"], "state": s["state"]} for s in status]
+        print(json.dumps(output, indent=2))
+        return 1 if inconsistent else 0
+
+    print(f"\nMigration status:")
+    print(f"{'Version':<20} {'Description':<40} {'Status':<15}")
+    print("-" * 75)
+    for s in status:
+        if s["state"] == "applied":
+            status_str = "✓ Applied"
+        elif s["state"] == "pending":
+            status_str = "○ Pending"
+        else:
+            status_str = "✗ Missing on disk"
+            
+        print(f"{s['version']:<20} {s['description']:<40} {status_str:<15}")
+
+    if inconsistent:
+        print("\nERROR: Database state is inconsistent. Some applied migrations are missing from disk.", file=sys.stderr)
+        return 1
+        
+    return 0
 
 
 def run_all_migrations(dry_run: bool = False) -> bool:
     status = get_migration_status()
-    pending = [m for m in status if not m["applied"]]
+    pending = [m for m in status if m["state"] == "pending"]
 
     if not pending:
         print("No pending migrations")
@@ -256,25 +368,30 @@ def create_migration(description: str) -> str:
 
 def main():
     parser = argparse.ArgumentParser(description="Database migration tool")
+    
+    subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
+    
+    # status subcommand
+    status_parser = subparsers.add_parser("status", help="Show migration status")
+    status_parser.add_argument("--json", action="store_true", help="Output in JSON format")
+    
+    # Legacy arguments
     parser.add_argument("--up", action="store_true", help="Apply all pending migrations")
     parser.add_argument("--down", action="store_true", help="Rollback a migration")
     parser.add_argument("--version", help="Migration version (required for --down)")
-    parser.add_argument("--status", action="store_true", help="Show migration status")
+    parser.add_argument("--status", action="store_true", help="Show migration status (legacy)")
     parser.add_argument("--create", help="Create a new migration file")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be done")
     parser.add_argument("--seed", action="store_true", help="Apply seed data")
     parser.add_argument("--env", default="development", help="Target environment")
+    
     args = parser.parse_args()
 
+    if args.command == "status":
+        return cmd_status(args.json)
+
     if args.status:
-        status = get_migration_status()
-        print(f"\nMigration status:")
-        print(f"{'Version':<20} {'Description':<40} {'Status':<10}")
-        print("-" * 70)
-        for m in status:
-            status_str = "✓ Applied" if m["applied"] else "○ Pending"
-            print(f"{m['version']:<20} {m['description']:<40} {status_str:<10}")
-        return 0
+        return cmd_status(False)
 
     if args.up:
         success = run_all_migrations(args.dry_run)
@@ -300,4 +417,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
+

@@ -206,6 +206,18 @@ FROM pg_stat_activity
 WHERE state = 'idle' AND age > interval '1 hour';
 ```
 
+### Migration Status
+
+To view the current database migration status (applied, pending, or missing), run:
+```bash
+python3 tools/db_migration.py status
+```
+
+For automated checks or JSON output, use:
+```bash
+python3 tools/db_migration.py status --json
+```
+
 ## Capacity Planning
 
 ### Resource Utilization
