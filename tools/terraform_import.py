@@ -126,6 +126,13 @@ class TerraformImporter:
         self.terraform_binary = terraform_binary
         self.results: List[Dict[str, Any]] = []
 
+    def validate_resource(self, resource: ResourceToImport) -> Tuple[bool, str]:
+        if "-" in resource.resource_name:
+            return False, f"Invalid resource name '{resource.resource_name}' for type '{resource.resource_type}': Hyphenated names cause state corruption."
+        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", resource.resource_name):
+            return False, f"Invalid resource name '{resource.resource_name}' for type '{resource.resource_type}': Must be a valid Terraform identifier."
+        return True, ""
+
     def check_terraform_version(self) -> bool:
         try:
             result = subprocess.run(
@@ -205,9 +212,24 @@ class TerraformImporter:
         start_time = time.time()
         import_result = ImportResult()
 
+        valid_resources = []
+        for resource in resources:
+            is_valid, error_msg = self.validate_resource(resource)
+            if not is_valid:
+                logger.error(error_msg)
+                import_result.results.append({
+                    "address": f"{resource.resource_type}.{resource.resource_name}",
+                    "resource_id": resource.resource_id,
+                    "status": "validation_failed",
+                    "error": error_msg,
+                })
+                import_result.failure_count += 1
+            else:
+                valid_resources.append(resource)
+
         if dry_run:
             logger.info("DRY RUN - No resources will be imported")
-            for resource in resources:
+            for resource in valid_resources:
                 address = f"{resource.resource_type}.{resource.resource_name}"
                 logger.info(f"  Would import: {address} (ID: {resource.resource_id})")
                 import_result.results.append({
@@ -223,7 +245,7 @@ class TerraformImporter:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_resource = {
                     executor.submit(self.import_resource, resource): resource
-                    for resource in resources
+                    for resource in valid_resources
                 }
                 for future in as_completed(future_to_resource):
                     resource = future_to_resource[future]
@@ -237,7 +259,7 @@ class TerraformImporter:
                         logger.error(f"Exception processing {resource.resource_name}: {e}")
                         import_result.failure_count += 1
         else:
-            for resource in resources:
+            for resource in valid_resources:
                 success = self.import_resource(resource)
                 if success:
                     import_result.success_count += 1
@@ -262,6 +284,10 @@ class TerraformImporter:
         lines = ["#!/bin/bash", "# Auto-generated Terraform import script", f"# Generated: {datetime.now().isoformat()}", ""]
 
         for resource in resources:
+            is_valid, error_msg = self.validate_resource(resource)
+            if not is_valid:
+                raise ValueError(error_msg)
+
             address = f"{resource.resource_type}.{resource.resource_name}"
             lines.append(
                 f"terraform import -state={resource.state_file} {address} {resource.resource_id}"
