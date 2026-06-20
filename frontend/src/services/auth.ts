@@ -276,10 +276,27 @@ export async function logout(): Promise<void> {
   notifyListeners(null);
 }
 
-export async function refreshTokens(): Promise<AuthTokens | null> {
-  const tokens = currentTokens || loadStoredTokens();
-  if (!tokens?.refreshToken) return null;
+const REFRESH_LOCK_KEY = 'tot_auth_refresh_lock';
 
+let authChannel: BroadcastChannel | null = null;
+if (typeof BroadcastChannel !== 'undefined') {
+  authChannel = new BroadcastChannel('tot_auth_channel');
+  authChannel.onmessage = (event) => {
+    if (event.data?.type === 'TOKENS_REFRESHED' && event.data.tokens) {
+      currentTokens = event.data.tokens;
+      scheduleTokenRefresh(event.data.tokens);
+      notifyListeners(currentUser);
+    } else if (event.data?.type === 'REFRESH_FAILED') {
+      clearStoredTokens();
+      currentUser = null;
+      notifyListeners(null);
+    }
+  };
+}
+
+let refreshPromise: Promise<AuthTokens | null> | null = null;
+
+async function doActualRefresh(tokens: AuthTokens): Promise<AuthTokens | null> {
   try {
     const response = await post<{ tokens: AuthTokens }>('/auth/refresh', {
       refreshToken: tokens.refreshToken,
@@ -287,14 +304,82 @@ export async function refreshTokens(): Promise<AuthTokens | null> {
 
     storeTokens(response.data.tokens);
     scheduleTokenRefresh(response.data.tokens);
+    localStorage.removeItem(REFRESH_LOCK_KEY);
+    
+    if (authChannel) {
+      authChannel.postMessage({ type: 'TOKENS_REFRESHED', tokens: response.data.tokens });
+    }
 
     return response.data.tokens;
   } catch {
+    const currentStored = localStorage.getItem(TOKEN_KEY);
+    if (currentStored) {
+      const parsedStored = JSON.parse(currentStored) as AuthTokens;
+      if (parsedStored.refreshToken !== tokens.refreshToken) {
+        currentTokens = parsedStored;
+        scheduleTokenRefresh(parsedStored);
+        return parsedStored;
+      }
+    }
+
     clearStoredTokens();
     currentUser = null;
     notifyListeners(null);
+    if (authChannel) {
+      authChannel.postMessage({ type: 'REFRESH_FAILED' });
+    }
+    localStorage.removeItem(REFRESH_LOCK_KEY);
     return null;
   }
+}
+
+export async function refreshTokens(): Promise<AuthTokens | null> {
+  const tokens = currentTokens || loadStoredTokens();
+  if (!tokens?.refreshToken) return null;
+
+  if (refreshPromise) return refreshPromise;
+
+  refreshPromise = (async () => {
+    try {
+      const lockTimeStr = localStorage.getItem(REFRESH_LOCK_KEY);
+      const now = Date.now();
+      if (lockTimeStr) {
+        const lockTime = parseInt(lockTimeStr, 10);
+        if (now - lockTime < 10000) {
+          return new Promise<AuthTokens | null>((resolve) => {
+            let attempts = 0;
+            const maxAttempts = 50;
+            const interval = setInterval(() => {
+              attempts++;
+              const currentStored = localStorage.getItem(TOKEN_KEY);
+              if (currentStored) {
+                const parsedStored = JSON.parse(currentStored) as AuthTokens;
+                if (parsedStored.refreshToken !== tokens.refreshToken) {
+                  clearInterval(interval);
+                  currentTokens = parsedStored;
+                  scheduleTokenRefresh(parsedStored);
+                  resolve(parsedStored);
+                  return;
+                }
+              }
+              if (attempts >= maxAttempts) {
+                clearInterval(interval);
+                localStorage.setItem(REFRESH_LOCK_KEY, Date.now().toString());
+                doActualRefresh(tokens).then(resolve).catch(() => resolve(null));
+              }
+            }, 100);
+          });
+        }
+      }
+
+      localStorage.setItem(REFRESH_LOCK_KEY, now.toString());
+      return await doActualRefresh(tokens);
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
 }
 
 export async function getCurrentUser(): Promise<User | null> {
