@@ -102,6 +102,10 @@ Runbooks are maintained in the internal wiki under "Operations Runbooks."
 
 Key runbooks:
 
+- **Incident Runbook**: Repository-local commands for build diagnostics,
+  service health checks, deployment rollback, migration failures, and OpenAPI
+  contract regressions are maintained in
+  [`INCIDENT_RUNBOOK.md`](INCIDENT_RUNBOOK.md).
 - **Service Recovery**: Steps to restart and verify a failed service
 - **Database Failover**: Steps to promote a replica to primary
 - **Data Recovery**: Steps to restore from backup
