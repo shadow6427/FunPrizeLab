@@ -99,6 +99,7 @@ Alerts are sent to PagerDuty and Slack (#ops-alerts channel).
 ### Runbooks
 
 Runbooks are maintained in the internal wiki under "Operations Runbooks."
+See also the [Incident Runbook](INCIDENT_RUNBOOK.md) for repository-specific operational failures.
 
 Key runbooks:
 
