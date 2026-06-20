@@ -304,6 +304,7 @@ type Collector struct {
 	dropped       int64
 	collectors    []MetricCollector
 	enricher      func(*MetricSample)
+	running       bool
 }
 
 // MetricCollector is an interface for sub-collectors that gather
@@ -462,7 +463,24 @@ func (c *Collector) RecordHistogram(name string, value float64, tags ...MetricTa
 // goroutines, causing duplicate flushes. This is a known issue.
 // TODO: Make Start() idempotent.
 func (c *Collector) Start(ctx context.Context) {
+	c.mu.Lock()
+	if c.running {
+		c.mu.Unlock()
+		return
+	}
+	c.running = true
+	stopCh := make(chan struct{})
+	c.stopCh = stopCh
+	c.mu.Unlock()
+
 	go func() {
+		defer func() {
+			c.mu.Lock()
+			if c.stopCh == stopCh {
+				c.running = false
+			}
+			c.mu.Unlock()
+		}()
 		// Tick immediately to flush any bootstrapped metrics
 		c.flush(ctx)
 		ticker := time.NewTicker(c.flushInterval)
@@ -473,7 +491,7 @@ func (c *Collector) Start(ctx context.Context) {
 				// Final flush before exiting
 				c.flush(context.Background())
 				return
-			case <-c.stopCh:
+			case <-stopCh:
 				return
 			case <-ticker.C:
 				c.flush(ctx)
@@ -486,9 +504,11 @@ func (c *Collector) Start(ctx context.Context) {
 // If you want a final flush, call Flush() before Stop().
 // TODO: Add a Drain() method that performs a final flush and then stops.
 func (c *Collector) Stop() {
-	select {
-	case c.stopCh <- struct{}{}:
-	default:
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.running {
+		close(c.stopCh)
+		c.running = false
 	}
 }
 
