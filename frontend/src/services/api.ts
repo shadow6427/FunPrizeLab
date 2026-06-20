@@ -200,6 +200,51 @@ function generateTraceId(): string {
 // CORE API FUNCTIONS
 // ---------------------------------------------------------------------------
 
+let refreshPromise: Promise<string> | null = null;
+
+async function handleTokenRefresh(): Promise<string> {
+  if (refreshPromise) {
+    return refreshPromise;
+  }
+
+  refreshPromise = (async () => {
+    try {
+      const url = buildUrl('/auth/refresh');
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Refresh failed with status ${response.status}`);
+      }
+
+      const data = await response.json();
+      const token = data.token || data.accessToken || data.access_token;
+      
+      if (token) {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('auth_token', token);
+        }
+        return token;
+      }
+      throw new Error('No token in refresh response');
+    } catch (error) {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('auth_token');
+      }
+      throw error;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
+}
+
 async function request<T>(
   method: string,
   path: string,
@@ -231,7 +276,31 @@ async function request<T>(
       const timeoutId = setTimeout(() => controller.abort(), timeout);
       requestConfig.signal = controller.signal;
 
-      const response = await fetch(requestConfig.url, requestConfig);
+      let response = await fetch(requestConfig.url, requestConfig);
+      
+      if (response.status === 401 && !requestConfig.url.includes('/auth/refresh')) {
+        try {
+          const newToken = await handleTokenRefresh();
+          const newHeaders = { ...(requestConfig.headers as Record<string, string>) };
+          newHeaders['Authorization'] = `Bearer ${newToken}`;
+          newHeaders[LEGACY_API_KEY_HEADER] = newToken;
+          requestConfig.headers = newHeaders;
+          
+          response = await fetch(requestConfig.url, requestConfig);
+        } catch (refreshErr) {
+          clearTimeout(timeoutId);
+          const authError: ApiError = {
+            code: 401,
+            message: 'Authentication failed. Please log in again.',
+          };
+          let processedError = authError;
+          for (const interceptor of errorInterceptors) {
+            processedError = interceptor(processedError);
+          }
+          throw processedError;
+        }
+      }
+
       clearTimeout(timeoutId);
 
       const responseData = await parseResponse<T>(response);
@@ -245,6 +314,10 @@ async function request<T>(
       return apiResponse;
     } catch (error) {
       lastError = error as Error;
+
+      if ((error as ApiError).code === 401) {
+        throw error;
+      }
 
       if (attempt < maxRetries && method === 'GET') {
         const delay = RETRY_BASE_DELAY * Math.pow(2, attempt) + Math.random() * 1000;
