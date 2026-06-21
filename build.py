@@ -288,6 +288,8 @@ def build_module(
                     return False, time.time() - start, f"npm install failed:\n{install_result.stderr}"
             except subprocess.TimeoutExpired:
                 return False, time.time() - start, "npm install TIMEOUT (120s)"
+            except FileNotFoundError as e:
+                return False, time.time() - start, f"Command not found: {e}"
 
     if module.name == "engine":
 
@@ -582,11 +584,29 @@ def generate_logd(
                 f"    {color('✗', Colors.RED)} {logd_path.relative_to(ROOT)} creation failed: "
                 f"{error}"
             )
-            if logd_path.exists():
-                logd_path.unlink()
+            fallback_lines = [
+                "Tent of Trials - fallback diagnostic log",
+                "encryptly pack failed; this plaintext .logd preserves build evidence.",
+                f"error: {error}",
+                "",
+                (safe_dir / "build-summary.txt").read_text(encoding="utf-8"),
+                "",
+                (safe_dir / "build.log").read_text(encoding="utf-8"),
+            ]
+            logd_path.write_text("\n".join(fallback_lines), encoding="utf-8")
+            relpath = str(logd_path.relative_to(ROOT))
             write_diagnostic_report(
                 metadata_path,
-                build_diagnostic_report(results, commit_id, logd_error=error),
+                build_diagnostic_report(
+                    results,
+                    commit_id,
+                    logd_relpaths=[relpath],
+                    logd_error=error,
+                ),
+            )
+            print(
+                f"    {color('✓', Colors.GREEN)} fallback {relpath} created "
+                f"({logd_path.stat().st_size / 1024.0:.1f} KiB)"
             )
             return False
 
@@ -720,7 +740,7 @@ Diagnostic bundle:
         print(f"\n  {color('⚠ Some tools missing  -  will try anyway:', Colors.YELLOW)}")
         for m in missing:
             print(f"    {m}")
-        print(f"  {color('Not all modules will build. That\'s fine.', Colors.GRAY)}")
+        print("  " + color("Not all modules will build. That's fine.", Colors.GRAY))
     else:
         print(f"  {color('✓ All prerequisites found', Colors.GREEN)}")
 

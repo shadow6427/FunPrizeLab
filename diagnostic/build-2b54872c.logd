@@ -1,0 +1,19 @@
+Tent of Trials - fallback diagnostic log
+encryptly pack failed; this plaintext .logd preserves build evidence.
+error: f4e4abe9174ebdd32a30
+
+Tent of Trials - Build Summary
+==================================================
+generated_at: 2026-06-21T00:30:03.223157+00:00
+total_modules: 1
+passed: 1
+failed: 0
+
+module results:
+  compliance: PASS (0.67s) [C:\Users\Adm\Documents\Codex\2026-06-03\files-mentioned-by-the-user-blog\work\funprizelab-shadow-git\compliance\build]
+
+
+==================================================
+compliance (PASS, 0.67s)
+==================================================
+artifact: C:\Users\Adm\Documents\Codex\2026-06-03\files-mentioned-by-the-user-blog\work\funprizelab-shadow-git\compliance\build
