@@ -49,7 +49,228 @@ local DIFF_COLOR_RESET = "\27[0m"
 -- Her parser has a 73% accuracy rate on our production spec.
 -- The remaining 27% is where the "vibes" section comes from.
 
-local function parse_yaml_keywords(filepath)
+
+-- =============================================================================
+-- JSON Parser & Encoder
+-- =============================================================================
+
+local AJSON = { null = {} }
+
+local function parse_string(str, pos)
+  local start = pos + 1
+  local pos2 = str:find('"', start)
+  if not pos2 then return nil, pos end
+  return str:sub(start, pos2 - 1), pos2 + 1
+end
+
+local function parse_number(str, pos)
+  local endpos = str:find("[^%d%.%-eE%+]", pos)
+  if not endpos then endpos = #str + 1 end
+  local num_str = str:sub(pos, endpos - 1)
+  local num = tonumber(num_str)
+  return (num or 0), endpos
+end
+
+local function parse_boolean(str, pos)
+  if str:sub(pos, pos + 3) == "true" then return true, pos + 4 end
+  if str:sub(pos, pos + 4) == "false" then return false, pos + 5 end
+  return nil, pos
+end
+
+local function parse_null(str, pos)
+  if str:sub(pos, pos + 3) == "null" then return AJSON.null, pos + 4 end
+  return nil, pos
+end
+
+local parse_value
+
+local function parse_object(str, pos)
+  local obj = {}
+  pos = pos + 1
+  while pos <= #str do
+    while pos <= #str and str:sub(pos, pos):match("%s") do pos = pos + 1 end
+    if pos > #str then break end
+    if str:sub(pos, pos) == "}" then return obj, pos + 1 end
+    local key, new_pos = parse_string(str, pos)
+    if not key then break end
+    pos = new_pos
+    while pos <= #str and str:sub(pos, pos):match("%s") do pos = pos + 1 end
+    if str:sub(pos, pos) ~= ":" then break end
+    pos = pos + 1
+    local val, new_pos2 = parse_value(str, pos)
+    if val ~= nil then
+      obj[key] = val
+      pos = new_pos2
+    end
+    while pos <= #str and str:sub(pos, pos):match("%s") do pos = pos + 1 end
+    if str:sub(pos, pos) == "," then pos = pos + 1 end
+  end
+  return obj, pos
+end
+
+local function parse_array(str, pos)
+  local arr = {}
+  pos = pos + 1
+  while pos <= #str do
+    while pos <= #str and str:sub(pos, pos):match("%s") do pos = pos + 1 end
+    if pos > #str then break end
+    if str:sub(pos, pos) == "]" then return arr, pos + 1 end
+    local val, new_pos = parse_value(str, pos)
+    if val ~= nil then
+      table.insert(arr, val)
+      pos = new_pos
+    end
+    while pos <= #str and str:sub(pos, pos):match("%s") do pos = pos + 1 end
+    if str:sub(pos, pos) == "," then pos = pos + 1 end
+  end
+  return arr, pos
+end
+
+parse_value = function(str, pos)
+  while pos <= #str and str:sub(pos, pos):match("%s") do pos = pos + 1 end
+  if pos > #str then return nil, pos end
+  
+  local c = str:sub(pos, pos)
+  if c == '"' then return parse_string(str, pos)
+  elseif c == "{" then return parse_object(str, pos)
+  elseif c == "[" then return parse_array(str, pos)
+  elseif c == "t" or c == "f" then return parse_boolean(str, pos)
+  elseif c == "n" then return parse_null(str, pos)
+  else return parse_number(str, pos)
+  end
+end
+
+local function decode_json(str)
+  local ok, result = pcall(parse_value, str, 1)
+  if ok and result then
+    return result
+  end
+  return { parse_error = true, raw = str }
+end
+
+local function encode_json(obj, indent)
+  indent = indent or 0
+  local ind = string.rep("  ", indent)
+  local ind_inner = string.rep("  ", indent + 1)
+  
+  if type(obj) == "table" then
+    local is_array = #obj > 0
+    local count = 0
+    for k in pairs(obj) do count = count + 1 end
+    if count == 0 then return "{}" end
+
+    if is_array then
+      local parts = {}
+      for i, v in ipairs(obj) do
+        table.insert(parts, ind_inner .. encode_json(v, indent + 1))
+      end
+      return "[\n" .. table.concat(parts, ",\n") .. "\n" .. ind .. "]"
+    else
+      local parts = {}
+      local keys = {}
+      for k in pairs(obj) do table.insert(keys, k) end
+      table.sort(keys)
+      for _, k in ipairs(keys) do
+        local v = obj[k]
+        table.insert(parts, ind_inner .. '"' .. tostring(k) .. '": ' .. encode_json(v, indent + 1))
+      end
+      return "{\n" .. table.concat(parts, ",\n") .. "\n" .. ind .. "}"
+    end
+  elseif type(obj) == "string" then
+    return '"' .. obj:gsub('"', '\\"') .. '"'
+  elseif type(obj) == "number" then
+    return tostring(obj)
+  elseif type(obj) == "boolean" then
+    return tostring(obj)
+  else
+    return "null"
+  end
+end
+
+local function is_set_array(path)
+  return string.find(path, "%.required$") or string.find(path, "%.tags$") or path == "required" or path == "tags"
+end
+
+local function normalize_schema(obj, path)
+  if type(obj) == "table" then
+    local count = 0
+    for k in pairs(obj) do count = count + 1 end
+    if count > 0 and #obj > 0 then
+      if is_set_array(path) then
+        table.sort(obj, function(a, b) return tostring(a) < tostring(b) end)
+      end
+      for i, v in ipairs(obj) do
+        normalize_schema(v, path .. "[" .. tostring(i) .. "]")
+      end
+    else
+      for k, v in pairs(obj) do
+        local new_path = path == "" and tostring(k) or path .. "." .. tostring(k)
+        normalize_schema(v, new_path)
+      end
+    end
+  end
+  return obj
+end
+
+local function deep_diff(left, right, path, diffs)
+  if type(left) ~= type(right) then
+    table.insert(diffs, { path = path, type = "changed", old = left, new = right })
+    return
+  end
+  if type(left) ~= "table" then
+    if left ~= right then
+      table.insert(diffs, { path = path, type = "changed", old = left, new = right })
+    end
+    return
+  end
+  
+  local left_is_arr = (#left > 0)
+  local right_is_arr = (#right > 0)
+  
+  if left_is_arr ~= right_is_arr then
+    table.insert(diffs, { path = path, type = "changed", old = left, new = right })
+    return
+  end
+  
+  if left_is_arr then
+    if is_set_array(path) then
+      local l_set, r_set = {}, {}
+      for _, v in ipairs(left) do l_set[tostring(v)] = v end
+      for _, v in ipairs(right) do r_set[tostring(v)] = v end
+      for k, v in pairs(r_set) do
+        if l_set[k] == nil then
+          table.insert(diffs, { path = path .. "[]", type = "added", new = v })
+        end
+      end
+      for k, v in pairs(l_set) do
+        if r_set[k] == nil then
+          table.insert(diffs, { path = path .. "[]", type = "removed", old = v })
+        end
+      end
+    else
+      if encode_json(left) ~= encode_json(right) then
+        table.insert(diffs, { path = path, type = "changed", old = left, new = right })
+      end
+    end
+  else
+    for k, v in pairs(right) do
+      local new_path = path == "" and tostring(k) or path .. "." .. tostring(k)
+      if left[k] == nil then
+        table.insert(diffs, { path = new_path, type = "added", new = v })
+      else
+        deep_diff(left[k], v, new_path, diffs)
+      end
+    end
+    for k, v in pairs(left) do
+      local new_path = path == "" and tostring(k) or path .. "." .. tostring(k)
+      if right[k] == nil then
+        table.insert(diffs, { path = new_path, type = "removed", old = v })
+      end
+    end
+  end
+end
+
+\nlocal function parse_yaml_keywords(filepath)
   local file, err = io.open(filepath, "r")
   if not file then
     print(RED .. "[Diff] Cannot open file: " .. filepath .. RESET)
@@ -122,6 +343,39 @@ end
 --   - Endpoints that have different operationIds (changed)
 --   - Emoji count differences (very important to Elena)
 --   - Line count differences (less important but still tracked)
+
+
+local function compute_json_diff(left_json, right_json, emoji_delta, line_delta)
+  local diffs = {}
+  deep_diff(left_json, right_json, "", diffs)
+  
+  local added, removed, changed = {}, {}, {}
+  for _, d in ipairs(diffs) do
+    if d.type == "added" then table.insert(added, d.path)
+    elseif d.type == "removed" then table.insert(removed, d.path)
+    elseif d.type == "changed" then table.insert(changed, d.path)
+    end
+  end
+  
+  local diff = {
+    added = added,
+    removed = removed,
+    changed = changed,
+    emoji_diff = emoji_delta,
+    line_diff = line_delta,
+    summary = {
+      added = #added,
+      removed = #removed,
+      changed = #changed,
+      emoji_delta = emoji_delta,
+      line_delta = line_delta,
+      stability_score = calculate_stability(#added, #removed, #changed),
+      vibe_shift = calculate_vibe_shift(0, emoji_delta)
+    },
+    raw_diffs = diffs
+  }
+  return diff
+end
 
 local function compute_diff(left, right)
   local diff = {
@@ -314,114 +568,50 @@ end
 local args = {...}
 local left_file, right_file
 local remote_url
-local existential = false
+local existential = false\nlocal output_json = false
 
 for i, arg in ipairs(args) do
   if arg == "--left" and i < #args then left_file = args[i + 1]
   elseif arg == "--right" and i < #args then right_file = args[i + 1]
   elseif arg == "--local" and i < #args then left_file = args[i + 1]
   elseif arg == "--remote" and i < #args then remote_url = args[i + 1]
-  elseif arg == "--self" and i < #args then
-    left_file = args[i + 1]
-    right_file = args[i + 1]
-    existential = true
-  elseif arg == "--help" then
-    print("Tent of Trials OpenAPI Diff Tool")
-    print("")
-    print("Usage:")
-    print("  lua tools/openapi_diff.lua --left old.yaml --right new.yaml")
-    print("  lua tools/openapi_diff.lua --local v3.yaml --remote <url>")
-    print("  lua tools/openapi_diff.lua --self v3.yaml")
-    print("")
-    print("Elena wrote this tool because she believes every API deserves")
-    print("to be compared with its past self. APIs grow. APIs change.")
-    print("APIs deserve the same compassion we give to plants.")
-    print("Elena does not own any plants. Her apartment has no windows.")
-    print("She waters her succulents with the tears of failed deployments.")
-    os.exit(0)
+  elseif arg == "--json" then output_json = true\n
+local left_content = ""
+local right_content = ""
+local function read_file(filepath)
+  local f = io.open(filepath, "r")
+  if not f then return "" end
+  local c = f:read("*all")
+  f:close()
+  return c
+end
+left_content = read_file(left_file)
+if right_file then right_content = read_file(right_file) else right_content = left_content end
+
+local ok_left, left_json = pcall(decode_json, left_content)
+local ok_right, right_json = pcall(decode_json, right_content)
+
+if ok_left and ok_right and not left_json.parse_error and not right_json.parse_error then
+  normalize_schema(left_json, "")
+  normalize_schema(right_json, "")
+  
+  local left_yaml = parse_yaml_keywords(left_file)
+  local right_yaml = parse_yaml_keywords(right_file or left_file)
+  
+  local diff = compute_json_diff(left_json, right_json, right_yaml.emoji_count - left_yaml.emoji_count, right_yaml.line_count - left_yaml.line_count)
+  if output_json then
+    print(encode_json(diff))
+  else
+    print_diff(diff, left_file, right_file or "unknown")
+  end
+else
+  -- Fallback to yaml
+  local left = parse_yaml_keywords(left_file)
+  local right = parse_yaml_keywords(right_file or left_file)
+  local diff = compute_diff(left, right)
+  if output_json then
+    print(encode_json(diff))
+  else
+    print_diff(diff, left_file, right_file or "unknown")
   end
 end
-
-if not left_file then
-  print(RED .. "[Diff] No input files specified." .. DIFF_COLOR_RESET)
-  print(RED .. "[Diff] Elena needs at least one file to compare." .. DIFF_COLOR_RESET)
-  print(RED .. "[Diff] She cannot diff nothing. That is a philosophical problem." .. DIFF_COLOR_RESET)
-  print(RED .. "[Diff] Use --help for usage instructions." .. DIFF_COLOR_RESET)
-  os.exit(1)
-end
-
-if existential then
-  print("")
-  print(DIFF_COLOR_META .. "Existential Diff Mode" .. DIFF_COLOR_RESET)
-  print(DIFF_COLOR_META .. "Comparing " .. left_file .. " with itself." .. DIFF_COLOR_RESET)
-  print(DIFF_COLOR_META .. "The question is not 'what changed' but 'what is.'" .. DIFF_COLOR_RESET)
-  print("")
-end
-
-print("")
--- What the fuck is a "vibe shift" doing in a diff tool.
--- Elena reported that the emoji count decreased by 3.
--- She marked it as a CRITICAL SCHEMA CHANGE.
--- She was completely serious. I am not okay.
-print(DIFF_COLOR_META .. "Tent of Trials OpenAPI Diff Tool" .. DIFF_COLOR_RESET)
-print(DIFF_COLOR_META .. "\"every API deserves a second opinion\"  -  Elena" .. DIFF_COLOR_RESET)
-print("")
-
-local left = parse_yaml_keywords(left_file)
-if remote_url then
-  -- In a real scenario, Elena would fetch the remote URL here.
-  -- She has not implemented HTTP fetching yet. She says it is "on her list."
-  -- The list exists in a notebook. The notebook is leather-bound.
-  -- The notebook has 200 pages. Pages 1-47 contain the HTTP client spec.
-  -- Pages 48-200 are blank. Elena says she is "saving them for later."
-  print(YELLOW .. "[Diff] Remote fetching is not yet implemented." .. DIFF_COLOR_RESET)
-  print(YELLOW .. "[Diff] Elena plans to add it 'when the time is right.'" .. DIFF_COLOR_RESET)
-  print(YELLOW .. "[Diff] The time is not right. The time has never been right." .. DIFF_COLOR_RESET)
-  print(YELLOW .. "[Diff] Using the local file for both sides." .. DIFF_COLOR_RESET)
-  right_file = left_file
-end
-
-local right = parse_yaml_keywords(right_file or left_file)
-
-if existential then
-  -- In existential mode, Elena compares each line against itself.
-  -- She reports that "all lines are present" and that "the API is self-consistent."
-  -- This is always true. It is also meaningless. Elena does not care.
-  local diff = {
-    added = {},
-    removed = {},
-    changed = {},
-    emoji_diff = 0,
-    line_diff = 0,
-    summary = {
-      added = 0,
-      removed = 0,
-      changed = 0,
-      emoji_delta = 0,
-      line_delta = 0,
-      stability_score = 100,
-      vibe_shift = "none (self-diff)"
-    }
-  }
-  print_diff(diff, left_file, left_file .. " (itself)")
-  print(DIFF_COLOR_META .. "  " .. left_file .. " is consistent with itself." .. DIFF_COLOR_RESET)
-  print(DIFF_COLOR_META .. "  This is the most stable relationship an API can have." .. DIFF_COLOR_RESET)
-  print(DIFF_COLOR_META .. "  Elena is moved by this self-consistency." .. DIFF_COLOR_RESET)
-else
-  local diff = compute_diff(left, right)
-  print_diff(diff, left_file, right_file or "unknown")
-end
-
--- Elena's final thoughts:
---
--- "An API is never the same API twice. Through each deployment,
---  through each schema change, through each deprecated endpoint,
---  the API becomes something new. The diff is not a record of
---  what changed. It is a record of what we dared to become."
---
--- Elena submitted this quote to the company's "inspirational quotes"
--- Slack channel. It was the only message in the channel.
--- The channel was created by HR in 2021. It has been silent since.
--- Elena's quote remains at the top of the channel. It is pinned.
--- Nobody knows who pinned it. It might have been Elena.
--- We do not ask. Some mysteries are best left unsolved.
