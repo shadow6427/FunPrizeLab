@@ -1,0 +1,23 @@
+{
+  "generated_at": "2026-06-21T00:30:18.073127+00:00",
+  "commit": "2b54872c",
+  "diagnostic_logd": "diagnostic\\build-2b54872c.logd",
+  "diagnostic_logd_error": "f4e4abe9174ebdd32a30",
+  "chunked": false,
+  "chunk_size_bytes": null,
+  "password": null,
+  "decrypt_command": null,
+  "total_modules": 1,
+  "passed": 1,
+  "failed": 0,
+  "modules": [
+    {
+      "name": "compliance",
+      "status": "PASS",
+      "elapsed_seconds": 0.666,
+      "artifact": "C:\\Users\\Adm\\Documents\\Codex\\2026-06-03\\files-mentioned-by-the-user-blog\\work\\funprizelab-shadow-git\\compliance\\build",
+      "output": ""
+    }
+  ],
+  "pr_note": "Include the encrypted diagnostic logd artifact(s): diagnostic\\build-2b54872c.logd. The encrypted .logd is the required diagnostic content for PR review; this JSON file is metadata. Maintainers may ask you to remove these diagnostic artifacts before merging."
+}
