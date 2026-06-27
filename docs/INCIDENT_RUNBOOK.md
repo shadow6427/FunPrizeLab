@@ -46,6 +46,27 @@ and change approval described in `docs/OPERATIONS.md`.
    build diagnostic JSON, `.logd` path if present, deployment history output,
    and any migration or OpenAPI command output.
 
+## Evidence Package
+
+Every incident path below should leave the same minimum evidence trail so that
+operators can compare failed builds, service state, deploy history, and follow-up
+validation without hunting through shell history.
+
+| Evidence | Command or source | Required when |
+| --- | --- | --- |
+| Build diagnostic metadata | `python3 build.py` then `diagnostic/build-<commit>.json` | Always |
+| Encrypted diagnostic log | `diagnostic/build-<commit>.logd` from the same build | Always when emitted |
+| Health snapshot | `python3 tools/health_check.py --json --output diagnostic/health-current.json` | Service health or deployment incidents |
+| Deployment history | `python3 tools/deploy.py --env production --history` | Bad deploy or rollback decisions |
+| Migration state | `python3 tools/db_migration.py --status --env production` | Migration incidents |
+| OpenAPI comparison | `lua tools/openapi_diff.lua docs/openapi/v3.yaml <candidate-schema>` | Contract regressions |
+
+`diagnostic/build-00000000.json` and `diagnostic/build-00000000.logd` are
+checked-in stubs. They can prove the file format exists, but they are not valid
+incident evidence or bounty payout evidence. Use the commit-specific files from
+the current `build.py` run, and keep the JSON and `.logd` names paired in the
+incident record.
+
 ## Failed Build Diagnostics
 
 Use this path when CI, local validation, or a bounty submission reports a

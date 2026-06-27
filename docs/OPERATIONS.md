@@ -107,9 +107,6 @@ Key runbooks:
   contract regressions are maintained in
   [`INCIDENT_RUNBOOK.md`](INCIDENT_RUNBOOK.md).
 - **Service Recovery**: Steps to restart and verify a failed service
-- **Incident Runbook**: Repository-specific flow for build diagnostics, health
-  checks, deployment rollback, migration failures, and OpenAPI regressions
-  (`docs/INCIDENT_RUNBOOK.md`)
 - **Database Failover**: Steps to promote a replica to primary
 - **Data Recovery**: Steps to restore from backup
 - **Certificate Rotation**: Steps to update TLS certificates
