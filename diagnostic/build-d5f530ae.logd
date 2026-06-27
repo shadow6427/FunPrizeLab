@@ -1,0 +1,73 @@
+Tent of Trials - fallback diagnostic log
+encryptly pack failed; this plaintext .logd preserves build evidence.
+error: 0031285261fae322cd51
+
+Tent of Trials - Build Summary
+==================================================
+generated_at: 2026-06-27T20:38:47.392918+00:00
+total_modules: 10
+passed: 0
+failed: 10
+
+module results:
+  backend: FAIL (0.00s)
+  frontend: FAIL (0.00s)
+  market: FAIL (0.00s)
+  frailbox: FAIL (0.00s)
+  engine: FAIL (0.00s)
+  compliance: FAIL (0.00s)
+  v2-market-stream: FAIL (0.00s)
+  nfc-scanner: FAIL (0.00s)
+  openapi-haskell: FAIL (0.00s)
+  openapi-tools: FAIL (0.00s)
+
+
+==================================================
+backend (FAIL, 0.00s)
+==================================================
+Command not found: [WinError 2] 系统找不到指定的文件。
+
+==================================================
+frontend (FAIL, 0.00s)
+==================================================
+Command not found: [WinError 2] 系统找不到指定的文件。
+
+==================================================
+market (FAIL, 0.00s)
+==================================================
+Command not found: [WinError 2] 系统找不到指定的文件。
+
+==================================================
+frailbox (FAIL, 0.00s)
+==================================================
+Command not found: [WinError 2] 系统找不到指定的文件。
+
+==================================================
+engine (FAIL, 0.00s)
+==================================================
+Command not found: [WinError 2] 系统找不到指定的文件。
+
+==================================================
+compliance (FAIL, 0.00s)
+==================================================
+Command not found: [WinError 2] 系统找不到指定的文件。
+
+==================================================
+v2-market-stream (FAIL, 0.00s)
+==================================================
+Command not found: [WinError 2] 系统找不到指定的文件。
+
+==================================================
+nfc-scanner (FAIL, 0.00s)
+==================================================
+Command not found: [WinError 2] 系统找不到指定的文件。
+
+==================================================
+openapi-haskell (FAIL, 0.00s)
+==================================================
+Command not found: [WinError 2] 系统找不到指定的文件。
+
+==================================================
+openapi-tools (FAIL, 0.00s)
+==================================================
+Command not found: [WinError 2] 系统找不到指定的文件。
